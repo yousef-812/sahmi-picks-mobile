@@ -3,6 +3,9 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:csv/csv.dart';
 import 'dart:convert';
+import 'dart:io';
+import 'ml/inference.dart';
+import 'ml/refresh.dart' show dataDir, refreshUniverse;
 
 void main() => runApp(const PicksApp());
 
@@ -72,22 +75,64 @@ const listFields = {
   ],
 };
 
+List<Map<String, String>> parseCsv(String raw) {
+  final rows = const CsvToListConverter().convert(raw);
+  if (rows.isEmpty) return [];
+  final head = rows.first.map((e) => e.toString()).toList();
+  return rows.skip(1).map((r) {
+    final m = <String, String>{};
+    for (var i = 0; i < head.length && i < r.length; i++) {
+      m[head[i]] = r[i].toString();
+    }
+    return m;
+  }).toList();
+}
+
 Future<List<Map<String, String>>> loadCsv(String path) async {
   try {
-    final raw = await rootBundle.loadString(path);
-    final rows = const CsvToListConverter().convert(raw);
-    if (rows.isEmpty) return [];
-    final head = rows.first.map((e) => e.toString()).toList();
-    return rows.skip(1).map((r) {
-      final m = <String, String>{};
-      for (var i = 0; i < head.length && i < r.length; i++) {
-        m[head[i]] = r[i].toString();
-      }
-      return m;
-    }).toList();
+    return parseCsv(await rootBundle.loadString(path));
   } catch (_) {
     return [];
   }
+}
+
+/// On-device refresh output overrides bundled assets when present.
+Future<String?> docsText(String name) async {
+  try {
+    final dir = await dataDir();
+    final f = File('${dir.path}/$name');
+    if (await f.exists()) return await f.readAsString();
+  } catch (_) {}
+  return null;
+}
+
+Future<List<Map<String, String>>> loadTable(String universe, String name) async {
+  final file = '${universe}_$name.csv';
+  final t = await docsText(file);
+  if (t != null) {
+    try {
+      return parseCsv(t);
+    } catch (_) {}
+  }
+  return loadCsv('assets/data/$file');
+}
+
+Future<String> loadAsof(String universe) async {
+  try {
+    final t = await docsText('meta.json');
+    if (t != null) {
+      final m = jsonDecode(t) as Map<String, dynamic>;
+      final u = m[universe] as Map<String, dynamic>?;
+      if (u != null && u['asof'] != null) return u['asof'].toString();
+    }
+  } catch (_) {}
+  try {
+    final t = await rootBundle.loadString('assets/data/meta.json');
+    final m = jsonDecode(t) as Map<String, dynamic>;
+    final u = m[universe] as Map<String, dynamic>?;
+    if (u != null && u['asof'] != null) return u['asof'].toString();
+  } catch (_) {}
+  return '';
 }
 
 Color confColor(String? c) {
@@ -131,6 +176,7 @@ class _HomePageState extends State<HomePage> {
   int customH = 7;
   bool loading = true;
   String asof = '';
+  String asofSrc = '';
   Map<String, List<Map<String, String>>> lists = {};
   List<Map<String, String>> scores = [];
   List<Map<String, String>> trades = [];
@@ -150,24 +196,26 @@ class _HomePageState extends State<HomePage> {
     final u = universe;
     final l = <String, List<Map<String, String>>>{};
     for (final k in ['intraday', 'swing', 'swing5', 'invest', 'consensus', 'excluded']) {
-      l[k] = await loadCsv('assets/data/${u}_$k.csv');
+      l[k] = await loadTable(u, k);
     }
-    final sc = await loadCsv('assets/data/${u}_scores.csv');
-    final tr = await loadCsv('assets/data/${u}_trades.csv');
-    String asofV = '';
+    final sc = await loadTable(u, 'scores');
+    final tr = await loadTable(u, 'trades');
+    final asofV = await loadAsof(u);
+    String src = '';
     try {
-      final metaStr = await rootBundle.loadString('assets/data/meta.json');
-      final meta = jsonDecode(metaStr) as Map<String, dynamic>;
-      final um = meta[u] as Map<String, dynamic>?;
-      if (um != null && um['asof'] != null) asofV = um['asof'].toString();
-    } catch (_) {}
-    final cu = await loadCsv('assets/data/${u}_custom_$customH.csv');
+      final t = await docsText('meta.json');
+      src = t != null ? 'محدّثة من الجهاز' : 'مدمجة مع التطبيق';
+    } catch (_) {
+      src = 'مدمجة مع التطبيق';
+    }
+    final cu = await loadTable(u, 'custom_$customH');
     if (!mounted) return;
     setState(() {
       lists = l;
       scores = sc;
       trades = tr;
       asof = asofV;
+      asofSrc = src;
       customRows = cu;
       searchResult = null;
       loading = false;
@@ -175,9 +223,99 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _loadCustom() async {
-    final cu = await loadCsv('assets/data/${universe}_custom_$customH.csv');
+    final cu = await loadTable(universe, 'custom_$customH');
     if (!mounted) return;
     setState(() => customRows = cu);
+  }
+
+  Future<void> _refreshAll() async {
+    final prog = ValueNotifier('بدء التحديث...');
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('تحديث البيانات من البورصة'),
+        content: ValueListenableBuilder<String>(
+          valueListenable: prog,
+          builder: (_, v, __) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const LinearProgressIndicator(),
+              const SizedBox(height: 12),
+              Text(v, style: const TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+      ),
+    );
+    try {
+      final parts = <String>[];
+      for (final u in ['egx33', 'all']) {
+        final rep = await refreshUniverse(u, onProgress: (d, t, tk) {
+          prog.value = '$u: $tk ($d/$t)';
+        });
+        parts.add('$u: ${rep.ok} ناجح / ${rep.fail} فاشل');
+      }
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم التحديث: ${parts.join(' • ')}')));
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('فشل التحديث'),
+          content: Text('$e'),
+          actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('حسناً'))],
+        ),
+      );
+    } finally {
+      prog.dispose();
+    }
+  }
+
+  Future<void> _selfTest() async {
+    String msg;
+    try {
+      final raw = await rootBundle.loadString('assets/parity_test.json');
+      final t = jsonDecode(raw) as Map<String, dynamic>;
+      final rows = (t['rows'] as List)
+          .map((r) => (r as List).map((v) => v == null ? double.nan : (v as num).toDouble()).toList())
+          .toList();
+      var worst = 0.0;
+      for (final key in ['h5', 'intra']) {
+        final reg = HgbModel.fromJson(
+            await rootBundle.loadString('assets/models/egx33_${key}_reg.json'), false);
+        final clf = HgbModel.fromJson(
+            await rootBundle.loadString('assets/models/egx33_${key}_clf.json'), true);
+        final er = (t['expect'][key]['reg'] as List).map((v) => (v as num).toDouble()).toList();
+        final ec = (t['expect'][key]['clf'] as List).map((v) => (v as num).toDouble()).toList();
+        for (var i = 0; i < rows.length; i++) {
+          final d1 = (reg.predictReg(rows[i]) - er[i]).abs();
+          final d2 = (clf.predictProba(rows[i]) - ec[i]).abs();
+          if (d1 > worst) worst = d1;
+          if (d2 > worst) worst = d2;
+        }
+      }
+      msg = worst < 1e-3
+          ? 'النماذج سليمة ✓ (أكبر فرق $worst على ${rows.length} صف)'
+          : 'تحذير: فرق كبير $worst — راجع ملفات النماذج';
+    } catch (e) {
+      msg = 'تعذر الفحص: $e';
+    }
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('فحص سلامة النماذج'),
+        content: Text(msg),
+        actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('حسناً'))],
+      ),
+    );
   }
 
   String? _confOf(Map<String, String> r, String key) {
@@ -442,7 +580,7 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
         if (asof.isNotEmpty)
-          Text('الداتا بتاريخ: $asof', style: const TextStyle(fontWeight: FontWeight.bold)),
+          Text('الداتا بتاريخ: $asof ($asofSrc)', style: const TextStyle(fontWeight: FontWeight.bold)),
         Expanded(
           child: loading
               ? const Center(child: CircularProgressIndicator())
@@ -482,6 +620,18 @@ class _HomePageState extends State<HomePage> {
         title: const Text('قوايم الأسهم اليومية'),
         backgroundColor: navy,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.verified),
+            tooltip: 'فحص النماذج',
+            onPressed: _selfTest,
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'تحديث البيانات من البورصة',
+            onPressed: _refreshAll,
+          ),
+        ],
       ),
       body: tab == 0 ? _listsTab() : (tab == 1 ? _searchTab() : _recordTab()),
       bottomNavigationBar: NavigationBar(

@@ -25,6 +25,19 @@ jobs:
       - name: Scaffold native project
         run: flutter create --org com.sahmipicks --project-name sahmi_picks_mobile app_build
 
+      - name: Allow internet (on-device refresh)
+        run: |
+          python3 - <<'EOF'
+          from pathlib import Path
+          p = Path("app_build/android/app/src/main/AndroidManifest.xml")
+          t = p.read_text()
+          perm = '<uses-permission android:name="android.permission.INTERNET"/>'
+          if perm not in t:
+              t = t.replace("<application", perm + "\n    <application", 1)
+          p.write_text(t)
+          print("manifest patched:", perm in p.read_text())
+          EOF
+
       - name: Copy app source + data
         run: |
           cp pubspec.yaml analysis_options.yaml app_build/
