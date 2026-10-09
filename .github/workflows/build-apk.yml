@@ -64,6 +64,22 @@ jobs:
       - name: Build APK
         run: cd app_build && flutter build apk --release
 
+      - name: Verify bundled data inside APK
+        run: |
+          python3 - <<'EOF'
+          import zipfile, sys
+          z = zipfile.ZipFile("app_build/build/app/outputs/flutter-apk/app-release.apk")
+          names = z.namelist()
+          data = [n for n in names if n.startswith("assets/flutter_assets/assets/data/")]
+          models = [n for n in names if n.startswith("assets/flutter_assets/assets/models/")]
+          parity = [n for n in names if n.endswith("parity_test.json")]
+          print("data files:", len(data), "| model files:", len(models), "| parity:", len(parity))
+          assert len(data) >= 60, f"missing bundled data! found {len(data)}"
+          assert len(models) >= 90, f"missing models! found {len(models)}"
+          assert parity, "missing parity_test.json!"
+          print("APK bundle check PASSED")
+          EOF
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:

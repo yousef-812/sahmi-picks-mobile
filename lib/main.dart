@@ -117,10 +117,11 @@ const listFields = {
 };
 
 List<Map<String, String>> parseCsv(String raw) {
-  final rows = const CsvToListConverter().convert(raw);
+  final clean = raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  final rows = const CsvToListConverter(eol: '\n').convert(clean);
   if (rows.isEmpty) return [];
   final head = rows.first.map((e) => e.toString()).toList();
-  return rows.skip(1).map((r) {
+  return rows.skip(1).where((r) => r.isNotEmpty).map((r) {
     final m = <String, String>{};
     for (var i = 0; i < head.length && i < r.length; i++) {
       m[head[i]] = r[i].toString();
@@ -218,6 +219,7 @@ class _HomePageState extends State<HomePage> {
   bool loading = true;
   String asof = '';
   String asofSrc = '';
+  Map<String, String> diag = {};
   Map<String, List<Map<String, String>>> lists = {};
   List<Map<String, String>> scores = [];
   List<Map<String, String>> trades = [];
@@ -390,11 +392,30 @@ class _HomePageState extends State<HomePage> {
     setState(() => loading = true);
     final u = universe;
     final l = <String, List<Map<String, String>>>{};
+    final dg = <String, String>{};
     for (final k in ['intraday', 'swing', 'swing5', 'invest', 'consensus', 'excluded']) {
-      l[k] = await loadTable(u, k);
+      try {
+        l[k] = await loadTable(u, k);
+        dg[k] = '${l[k]!.length} صف';
+      } catch (e) {
+        l[k] = [];
+        dg[k] = 'خطأ: $e';
+      }
     }
-    final sc = await loadTable(u, 'scores');
-    final tr = await loadTable(u, 'trades');
+    List<Map<String, String>> sc = [];
+    try {
+      sc = await loadTable(u, 'scores');
+      dg['scores'] = '${sc.length} سهم';
+    } catch (e) {
+      dg['scores'] = 'خطأ: $e';
+    }
+    List<Map<String, String>> tr = [];
+    try {
+      tr = await loadTable(u, 'trades');
+      dg['trades'] = '${tr.length} صفقة';
+    } catch (e) {
+      dg['trades'] = 'خطأ: $e';
+    }
     final asofV = await loadAsof(u);
     String src = '';
     try {
@@ -414,6 +435,7 @@ class _HomePageState extends State<HomePage> {
       customRows = cu;
       searchResult = null;
       loading = false;
+      diag = dg;
     });
   }
 
@@ -637,7 +659,18 @@ class _HomePageState extends State<HomePage> {
           child: loading
               ? const Center(child: CircularProgressIndicator())
               : rows.isEmpty
-                  ? const Center(child: Text('فاضية - جالسين بره السوق', style: TextStyle(fontSize: 16)))
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Text(
+                          listKey == 'consensus'
+                              ? 'فاضية - جالسين بره السوق'
+                              : 'لا توجد بيانات\n${diag.entries.map((e) => '${e.key}: ${e.value}').join('\n')}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      ),
+                    )
                   : ListView.builder(
                       itemCount: rows.length,
                       itemBuilder: (_, i) => _card(rows[i], fieldsKey),
