@@ -25,17 +25,24 @@ jobs:
       - name: Scaffold native project
         run: flutter create --org com.sahmipicks --project-name sahmi_picks_mobile app_build
 
-      - name: Allow internet (on-device refresh)
+      - name: Allow internet + foreground service
         run: |
           python3 - <<'EOF'
           from pathlib import Path
           p = Path("app_build/android/app/src/main/AndroidManifest.xml")
           t = p.read_text()
-          perm = '<uses-permission android:name="android.permission.INTERNET"/>'
-          if perm not in t:
-              t = t.replace("<application", perm + "\n    <application", 1)
+          for perm in ['<uses-permission android:name="android.permission.INTERNET"/>',
+                       '<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>',
+                       '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>',
+                       '<uses-permission android:name="android.permission.WAKE_LOCK"/>']:
+              if perm not in t:
+                  t = t.replace("<application", perm + "\n    <application", 1)
+          svc = ('<service android:name="com.pravera.flutter_foreground_task.service.ForegroundService" '
+                 'android:exported="false" android:foregroundServiceType="dataSync" />')
+          if 'flutter_foreground_task' not in t:
+              t = t.replace("</application>", "        " + svc + "\n    </application>", 1)
           p.write_text(t)
-          print("manifest patched:", perm in p.read_text())
+          print("patched:", 'FOREGROUND_SERVICE' in p.read_text() and 'ForegroundService' in p.read_text())
           EOF
 
       - name: Copy app source + data

@@ -93,12 +93,60 @@ class RefreshReport {
   String asof = '';
   int consensus = 0;
   List<String> failedTickers = [];
+  bool resumed = false;
+  bool restartedFresh = false;
+}
+
+Future<Directory> _partialDir() async {
+  final base = await dataDir();
+  final d = Directory('${base.path}/partial');
+  if (!await d.exists()) await d.create(recursive: true);
+  return d;
+}
+
+Future<Map<String, dynamic>?> readPartialState(String tag) async {
+  try {
+    final dir = await _partialDir();
+    final f = File('${dir.path}/state_$tag.json');
+    if (!await f.exists()) return null;
+    final m = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+    if ((m['done'] as List).isEmpty) return null;
+    return m;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<void> clearPartial(String tag) async {  try {
+    final dir = await _partialDir();
+    final f = File('${dir.path}/state_$tag.json');
+    if (await f.exists()) await f.delete();
+    await for (final e in dir.list()) {
+      if (e is File && ppath.basename(e.path).startsWith('${tag}_') && e.path.endsWith('.csv')) {
+        await e.delete();
+      }
+    }
+  } catch (_) {}
+}
+
+Future<void> _savePartial(String tag, StockHist h, List<String> done, String maxDate) async {
+  try {
+    final dir = await _partialDir();
+    final sb = StringBuffer()..writeln('date,open,high,low,close,volume');
+    for (final c in h.candles) {
+      sb.writeln('${c.date.toIso8601String().substring(0, 10)},${c.o},${c.h},${c.l},${c.c},${c.v}');
+    }
+    await File('${dir.path}/${tag}_${h.ticker}.csv').writeAsString(sb.toString());
+    await File('${dir.path}/state_$tag.json').writeAsString(jsonEncode(
+        {'maxDate': maxDate, 'done': done, 'savedAt': DateTime.now().toIso8601String()}));
+  } catch (_) {}
 }
 
 /// Full on-device refresh for one universe. Calls onProgress(done, total, ticker).
 Future<RefreshReport> refreshUniverse(
   String tag, {
   required Future<void> Function(int done, int total, String ticker) onProgress,
+  bool fresh = false,
 }) async {
   final rep = RefreshReport();
   // tickers: ALL -> live scanner, EGX33 -> bundled fixed set
@@ -119,9 +167,66 @@ Future<RefreshReport> refreshUniverse(
   }
 
   final hists = <String, StockHist>{};
-  var done = 0;
-  for (var i = 0; i < tickers.length; i += 6) {
-    final chunk = tickers.sublist(i, (i + 6 > tickers.length) ? tickers.length : i + 6);
+  final doneList = <String>[];
+  var maxDate = '';
+  // استكمال ذكي: لو فيه جزء محفوظ وجلسة جديدة لم تبدأ، كمّل عليه
+  if (!fresh) {
+    final state = await readPartialState(tag);
+    if (state != null) {
+      String? probeDate;
+      try {
+        final pr = await fetchTicker('ABUK');
+        if (pr.$1 != null && pr.$1!.isNotEmpty) {
+          final ds = pr.$1!.map((c) => c.date.toIso8601String().substring(0, 10)).toList()..sort();
+          probeDate = ds.last;
+        }
+      } catch (_) {}
+      final savedMax = (state['maxDate'] ?? '').toString();
+      if (probeDate != null && probeDate.compareTo(savedMax) > 0) {
+        // جلسة جديدة نزلت — الجزء المحفوظ قديم: ارميه وابدأ من جديد
+        await clearPartial(tag);
+        rep.restartedFresh = true;
+      } else {
+        final dir = await _partialDir();
+        for (final t in (state['done'] as List).map((e) => e.toString())) {
+          try {
+            final f = File('${dir.path}/${tag}_$t.csv');
+            if (!await f.exists()) continue;
+            final rows = _readCsvTable(await f.readAsString());
+            final cl = <Candle>[];
+            for (final r in rows) {
+              cl.add(Candle(
+                date: DateTime.parse(r['date']!).toUtc(),
+                o: double.parse(r['open']!),
+                h: double.parse(r['high']!),
+                l: double.parse(r['low']!),
+                c: double.parse(r['close']!),
+                v: double.tryParse(r['volume'] ?? '') ?? 0.0,
+              ));
+            }
+            if (cl.length >= 60) {
+              final h = StockHist(t, cl);
+              if (h.rowOk(h.candles.length - 1)) {
+                hists[t] = h;
+                doneList.add(t);
+                rep.ok++;
+              }
+            }
+          } catch (_) {}
+        }
+        if (doneList.isNotEmpty) {
+          rep.resumed = true;
+          maxDate = savedMax;
+        }
+      }
+    }
+  } else {
+    await clearPartial(tag);
+  }
+  final todo = tickers.where((t) => !doneList.contains(t)).toList();
+  var done = doneList.length;
+  for (var i = 0; i < todo.length; i += 6) {
+    final chunk = todo.sublist(i, (i + 6 > todo.length) ? todo.length : i + 6);
     final res = await Future.wait(chunk.map((t) async {
       final r = await fetchTicker(t);
       done++;
@@ -135,6 +240,10 @@ Future<RefreshReport> refreshUniverse(
         if (h.rowOk(h.candles.length - 1)) {
           hists[e.key] = h;
           rep.ok++;
+          doneList.add(e.key);
+          final md = h.candles.last.date.toIso8601String().substring(0, 10);
+          if (md.compareTo(maxDate) > 0) maxDate = md;
+          await _savePartial(tag, h, doneList, maxDate);
         } else {
           rep.fail++;
           rep.failedTickers.add(e.key);
@@ -146,6 +255,7 @@ Future<RefreshReport> refreshUniverse(
     }
   }
   if (hists.isEmpty) throw Exception('no data fetched');
+  await clearPartial(tag);
 
   // breadth regime
   var above = 0;
@@ -439,4 +549,36 @@ Future<RefreshReport> refreshUniverse(
   meta[tag] = {'asof': asof};
   await metaF.writeAsString(jsonEncode(meta), encoding: utf8);
   return rep;
+}
+
+/// Refresh command for the background isolate: 'fresh' or 'resume'.
+Future<void> writeCmd(String mode) async {
+  try {
+    final dir = await dataDir();
+    await File(ppath.join(dir.path, 'cmd.json')).writeAsString(jsonEncode({'mode': mode}), encoding: utf8);
+  } catch (_) {}
+}
+
+Future<String> readCmd() async {
+  try {
+    final dir = await dataDir();
+    final f = File(ppath.join(dir.path, 'cmd.json'));
+    if (!await f.exists()) return 'fresh';
+    final m = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+    return (m['mode'] ?? 'fresh').toString();
+  } catch (_) {
+    return 'fresh';
+  }
+}
+
+/// Existing partial states across universes (for the resume dialog).
+Future<List<Map<String, String>>> listPartials() async {
+  final out = <Map<String, String>>[];
+  for (final tag in ['egx33', 'all']) {
+    final s = await readPartialState(tag);
+    if (s != null) {
+      out.add({'tag': tag, 'maxDate': (s['maxDate'] ?? '').toString(), 'count': ((s['done'] as List).length).toString()});
+    }
+  }
+  return out;
 }

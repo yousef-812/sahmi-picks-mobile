@@ -4,10 +4,48 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:csv/csv.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'ml/bg_task.dart';
 import 'ml/inference.dart';
-import 'ml/refresh.dart' show dataDir, refreshUniverse;
+import 'ml/refresh.dart'
+    show dataDir, refreshUniverse, writeCmd, listPartials;
 
-void main() => runApp(const PicksApp());
+final bgProgress = ValueNotifier<Map<String, dynamic>>({});
+final bgEvent = ValueNotifier<Map<String, dynamic>?>(null);
+
+void _bgRouter(Object data) {
+  if (data is Map) {
+    final m = Map<String, dynamic>.from(data);
+    if (m['type'] == 'progress') {
+      bgProgress.value = m;
+    } else {
+      bgEvent.value = m;
+    }
+  }
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'picks_refresh',
+        channelName: 'تحديث البيانات',
+        channelDescription: 'تحديث بيانات الأسهم في الخلفية مع إشعار تقدم',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
+        iconData: const NotificationIconData(
+            resType: ResourceType.mipmap, resPrefix: ResourcePrefix.ic, name: 'launcher'),
+      ),
+      iosNotificationOptions:
+          const IOSNotificationOptions(showNotification: true, playSound: false),
+      foregroundTaskOptions: const ForegroundTaskOptions(
+          interval: 5000, autoRunOnBoot: false, allowWakeLock: true, allowWifiLock: true),
+    );
+    FlutterForegroundTask.addTaskDataCallback(_bgRouter);
+  } catch (_) {}
+  runApp(const PicksApp());
+}
 
 const navy = Color(0xFF1F4E78);
 const gridH = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 25, 30, 40, 50, 60, 80, 100, 120];
@@ -188,7 +226,158 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    bgEvent.addListener(_onBgEvent);
     _load();
+    try {
+      FlutterForegroundTask.isRunningService.then((r) {
+        if (r && mounted) _showBgProgress();
+      }).catchError((_) {});
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    bgEvent.removeListener(_onBgEvent);
+    super.dispose();
+  }
+
+  bool _bgDlgOpen = false;
+  final List<String> _bgSummaries = [];
+
+  void _onBgEvent() {
+    final e = bgEvent.value;
+    if (e == null || !mounted) return;
+    bgEvent.value = null;
+    if (e['type'] == 'universe_done') {
+      var s = '${e['u']}: ${e['ok']} ناجح / ${e['fail']} فاشل';
+      if (e['resumed'] == true) s += ' (استكمال)';
+      if (e['restartedFresh'] == true) s += ' (جلسة جديدة - بدأ من جديد)';
+      _bgSummaries.add(s);
+      return;
+    }
+    if (e['type'] == 'done') {
+      if (_bgDlgOpen && mounted) {
+        Navigator.of(context).pop();
+        _bgDlgOpen = false;
+      }
+      if (e['ok'] == true) {
+        _load();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('تم التحديث: ${_bgSummaries.join(' • ')}')));
+        }
+      } else {
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text('فشل التحديث'),
+              content: Text('${e['error'] ?? 'خطأ غير معروف'}\nالتقدم محفوظ ويمكن الاستكمال لاحقاً.'),
+              actions: [
+                TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('حسناً'))
+              ],
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  void _showBgProgress() {
+    if (_bgDlgOpen) return;
+    _bgDlgOpen = true;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('تحديث البيانات (خلفية)'),
+        content: ValueListenableBuilder<Map<String, dynamic>>(
+          valueListenable: bgProgress,
+          builder: (_, v, __) {
+            final d = v['done'], t = v['total'];
+            final txt = (d == null || t == null) ? 'بدء...' : '${v['u']}: ${v['ticker']} ($d/$t)';
+            final frac = (d is num && t is num && t > 0) ? (d / t).clamp(0.0, 1.0) : null;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                LinearProgressIndicator(value: frac),
+                const SizedBox(height: 12),
+                Text(txt, style: const TextStyle(fontSize: 13)),
+                const SizedBox(height: 6),
+                const Text('يمكنك استخدام الموبايل عادي - تابع من الإشعارات',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
+            );
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              try {
+                await FlutterForegroundTask.stopService();
+              } catch (_) {}
+              if (mounted) {
+                Navigator.of(context).pop();
+                _bgDlgOpen = false;
+              }
+            },
+            child: const Text('إيقاف مؤقت (يُحفظ التقدم)'),
+          ),
+        ],
+      ),
+    ).then((_) => _bgDlgOpen = false);
+  }
+
+  Future<void> _refreshForeground(String mode) async {
+    final prog = ValueNotifier('بدء التحديث...');
+    if (!mounted) return;
+    _bgDlgOpen = true;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('تحديث البيانات'),
+        content: ValueListenableBuilder<String>(
+          valueListenable: prog,
+          builder: (_, v, __) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const LinearProgressIndicator(),
+              const SizedBox(height: 12),
+              Text(v, style: const TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+      ),
+    ).then((_) => _bgDlgOpen = false);
+    try {
+      final parts = <String>[];
+      for (final u in ['egx33', 'all']) {
+        final rep = await refreshUniverse(u, fresh: mode == 'fresh',
+            onProgress: (d, t, tk) async {
+          prog.value = '$u: $tk ($d/$t)';
+        });
+        parts.add('$u: ${rep.ok} ناجح / ${rep.fail} فاشل');
+      }
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم التحديث: ${parts.join(' • ')}')));
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('فشل التحديث'),
+          content: Text('$e'),
+          actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('حسناً'))],
+        ),
+      );
+    } finally {
+      prog.dispose();
+    }
   }
 
   Future<void> _load() async {
@@ -229,53 +418,58 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _refreshAll() async {
-    final prog = ValueNotifier('بدء التحديث...');
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('تحديث البيانات من البورصة'),
-        content: ValueListenableBuilder<String>(
-          valueListenable: prog,
-          builder: (_, v, __) => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const LinearProgressIndicator(),
-              const SizedBox(height: 12),
-              Text(v, style: const TextStyle(fontSize: 13)),
-            ],
-          ),
-        ),
-      ),
-    );
-    try {
-      final parts = <String>[];
-      for (final u in ['egx33', 'all']) {
-        final rep = await refreshUniverse(u, onProgress: (d, t, tk) async {
-          prog.value = '$u: $tk ($d/$t)';
-        });
-        parts.add('$u: ${rep.ok} ناجح / ${rep.fail} فاشل');
-      }
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      await _load();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم التحديث: ${parts.join(' • ')}')));
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('فشل التحديث'),
-          content: Text('$e'),
-          actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('حسناً'))],
-        ),
-      );
-    } finally {
-      prog.dispose();
+    final partials = await listPartials();
+    var mode = 'fresh';
+    if (partials.isNotEmpty && mounted) {
+      final desc = partials
+          .map((p) =>
+              '${p['tag'] == 'egx33' ? 'EGX33' : 'كل البورصة'}: ${p['count']} سهم محفوظ بتاريخ ${p['maxDate']}')
+          .join('\n');
+      mode = await showDialog<String>(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text('يوجد تحديث ناقص'),
+              content: Text('$desc\n\nلو نزلت جلسة جديدة سيرفض الاستكمال ويبدأ من جديد تلقائياً.'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.of(context).pop('resume'),
+                    child: const Text('استكمال')),
+                TextButton(
+                    onPressed: () => Navigator.of(context).pop('fresh'),
+                    child: const Text('بدء من جديد')),
+                TextButton(
+                    onPressed: () => Navigator.of(context).pop('cancel'),
+                    child: const Text('إلغاء')),
+              ],
+            ),
+          ) ??
+          'cancel';
+      if (mode == 'cancel') return;
     }
+    await writeCmd(mode);
+    var useBg = false;
+    try {
+      var perm = await FlutterForegroundTask.checkNotificationPermission();
+      if (perm != NotificationPermission.granted) {
+        perm = await FlutterForegroundTask.requestNotificationPermission();
+      }
+      if (perm == NotificationPermission.granted) {
+        await FlutterForegroundTask.startService(
+          notificationTitle: 'تحديث القوايم',
+          notificationText: 'بدء التحديث...',
+          callback: startCallback,
+        );
+        useBg = true;
+      }
+    } catch (_) {
+      useBg = false;
+    }
+    if (!useBg) {
+      await _refreshForeground(mode);
+      return;
+    }
+    _bgSummaries.clear();
+    if (mounted) _showBgProgress();
   }
 
   Future<void> _selfTest() async {
