@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as ppath;
 import 'package:path_provider/path_provider.dart';
+import 'indicators.dart';
 import 'market.dart';
 import 'score.dart';
 

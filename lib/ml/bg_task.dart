@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:isolate';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'refresh.dart';
@@ -11,11 +10,8 @@ void startCallback() {
 }
 
 class RefreshTaskHandler extends TaskHandler {
-  SendPort? _port;
-
   @override
-  Future<void> onStart(DateTime timestamp, SendPort? sendPort) async {
-    _port = sendPort;
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     String mode = 'fresh';
     try {
       mode = await readCmd();
@@ -26,7 +22,8 @@ class RefreshTaskHandler extends TaskHandler {
           u,
           fresh: mode == 'fresh',
           onProgress: (d, t, tk) async {
-            _port?.send({'type': 'progress', 'u': u, 'done': d, 'total': t, 'ticker': tk});
+            FlutterForegroundTask.sendDataToMain(
+                {'type': 'progress', 'u': u, 'done': d, 'total': t, 'ticker': tk});
             try {
               await FlutterForegroundTask.updateService(
                 notificationTitle: 'تحديث القوايم',
@@ -35,15 +32,15 @@ class RefreshTaskHandler extends TaskHandler {
             } catch (_) {}
           },
         );
-        _port?.send({
+        FlutterForegroundTask.sendDataToMain({
           'type': 'universe_done', 'u': u, 'ok': rep.ok, 'fail': rep.fail,
           'asof': rep.asof, 'consensus': rep.consensus,
           'resumed': rep.resumed, 'restartedFresh': rep.restartedFresh,
         });
       }
-      _port?.send({'type': 'done', 'ok': true});
+      FlutterForegroundTask.sendDataToMain({'type': 'done', 'ok': true});
     } catch (e) {
-      _port?.send({'type': 'done', 'ok': false, 'error': '$e'});
+      FlutterForegroundTask.sendDataToMain({'type': 'done', 'ok': false, 'error': '$e'});
     }
     await FlutterForegroundTask.stopService();
   }
@@ -52,7 +49,7 @@ class RefreshTaskHandler extends TaskHandler {
   void onRepeatEvent(DateTime timestamp) {}
 
   @override
-  Future<void> onDestroy(DateTime timestamp) async {}
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {}
 
   @override
   void onNotificationButtonPressed(String id) {}

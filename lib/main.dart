@@ -34,14 +34,17 @@ void main() async {
         channelDescription: 'تحديث بيانات الأسهم في الخلفية مع إشعار تقدم',
         channelImportance: NotificationChannelImportance.LOW,
         priority: NotificationPriority.LOW,
-        iconData: const NotificationIconData(
-            resType: ResourceType.mipmap, resPrefix: ResourcePrefix.ic, name: 'launcher'),
       ),
       iosNotificationOptions:
           const IOSNotificationOptions(showNotification: true, playSound: false),
-      foregroundTaskOptions: const ForegroundTaskOptions(
-          interval: 5000, autoRunOnBoot: false, allowWakeLock: true, allowWifiLock: true),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.nothing(),
+        autoRunOnBoot: false,
+        allowWakeLock: true,
+        allowWifiLock: true,
+      ),
     );
+    FlutterForegroundTask.initCommunicationPort();
     FlutterForegroundTask.addTaskDataCallback(_bgRouter);
   } catch (_) {}
   runApp(const PicksApp());
@@ -238,6 +241,9 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     bgEvent.removeListener(_onBgEvent);
+    try {
+      FlutterForegroundTask.removeTaskDataCallback(_bgRouter);
+    } catch (_) {}
     super.dispose();
   }
 
@@ -455,6 +461,7 @@ class _HomePageState extends State<HomePage> {
       }
       if (perm == NotificationPermission.granted) {
         await FlutterForegroundTask.startService(
+          serviceTypes: [ForegroundServiceTypes.dataSync],
           notificationTitle: 'تحديث القوايم',
           notificationText: 'بدء التحديث...',
           callback: startCallback,
