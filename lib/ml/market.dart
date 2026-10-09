@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
 import 'indicators.dart';
 
 const _tvUrl = 'wss://data.tradingview.com/socket.io/websocket';
@@ -86,19 +86,20 @@ List<Map<String, dynamic>> _parseTv(String data) {
 
 /// TradingView WebSocket history (fallback when Yahoo misses a ticker).
 Future<List<Candle>?> fetchTradingView(String ticker, {int count = 1400}) async {
-  WebSocketChannel? ch;
+  IOWebSocketChannel? ch;
   try {
     final sym = 'EGX:$ticker';
-    ch = WebSocketChannel.connect(Uri.parse(_tvUrl),
+    final channel = IOWebSocketChannel.connect(Uri.parse(_tvUrl),
         protocols: ['soap'], headers: {'Origin': 'https://www.tradingview.com', 'User-Agent': _ua});
-    await ch.ready.timeout(const Duration(seconds: 15));
+    ch = channel;
+    await channel.ready.timeout(const Duration(seconds: 15));
     final cs = 'cs_${DateTime.now().microsecondsSinceEpoch}';
     const series = 's1';
     final done = Completer<List<dynamic>>();
-    final sub = ch.stream.listen((raw) {
+    final sub = channel.stream.listen((raw) {
       final r = raw.toString();
       if (r.startsWith('~h~')) {
-        ch?.sink.add(r);
+        channel.sink.add(r);
         return;
       }
       for (final m in _parseTv(r)) {
@@ -116,11 +117,11 @@ Future<List<Candle>?> fetchTradingView(String ticker, {int count = 1400}) async 
     }, onError: (e) {
       if (!done.isCompleted) done.completeError(e);
     });
-    ch.sink.add(_fmt({'m': 'set_auth_token', 'p': ['unauthorized_user_token']}));
-    ch.sink.add(_fmt({'m': 'chart_create_session', 'p': [cs, '']}));
+    channel.sink.add(_fmt({'m': 'set_auth_token', 'p': ['unauthorized_user_token']}));
+    channel.sink.add(_fmt({'m': 'chart_create_session', 'p': [cs, '']}));
     final res = jsonEncode({'symbol': sym, 'adjustment': 'splits'});
-    ch.sink.add(_fmt({'m': 'resolve_symbol', 'p': [cs, 'symbol_1', '=$res']}));
-    ch.sink.add(_fmt({'m': 'create_series', 'p': [cs, series, series, 'symbol_1', '1D', count]}));
+    channel.sink.add(_fmt({'m': 'resolve_symbol', 'p': [cs, 'symbol_1', '=$res']}));
+    channel.sink.add(_fmt({'m': 'create_series', 'p': [cs, series, series, 'symbol_1', '1D', count]}));
     final pts = await done.future.timeout(const Duration(seconds: 25));
     await sub.cancel();
     final byTs = <int, Candle>{};
