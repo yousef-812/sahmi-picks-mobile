@@ -151,12 +151,13 @@ Future<List<Candle>?> fetchTradingView(String ticker, {int count = 1400}) async 
   }
 }
 
-/// Yahoo first, TradingView fallback. Null if both fail.
+/// TradingView أولاً (متأخر ربع ساعة فقط) ثم Yahoo للفاشل (قد تتأخر أياماً).
+/// Null if both fail.
 Future<(List<Candle>?, String)> fetchTicker(String ticker) async {
-  final y = await fetchYahoo(ticker);
-  if (y != null) return (y, 'yahoo');
   final t = await fetchTradingView(ticker);
   if (t != null) return (t, 'tradingview');
+  final y = await fetchYahoo(ticker);
+  if (y != null) return (y, 'yahoo');
   return (null, 'fail');
 }
 
