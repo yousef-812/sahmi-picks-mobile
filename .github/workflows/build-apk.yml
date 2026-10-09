@@ -1,0 +1,55 @@
+name: build-apk
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Scaffold native project
+        run: flutter create --org com.sahmipicks --project-name sahmi_picks_mobile app_build
+
+      - name: Copy app source + data
+        run: |
+          cp pubspec.yaml analysis_options.yaml app_build/
+          rm -rf app_build/lib
+          cp -r lib app_build/
+          cp -r assets app_build/
+
+      - name: Icons (best effort)
+        run: cd app_build && dart run flutter_launcher_icons || true
+
+      - name: Pub get
+        run: cd app_build && flutter pub get
+
+      - name: Analyze
+        run: cd app_build && flutter analyze || true
+
+      - name: Build APK
+        run: cd app_build && flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sahmi-picks-apk
+          path: app_build/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app_build/build/app/outputs/flutter-apk/app-release.apk
