@@ -458,9 +458,9 @@ class _HomePageState extends State<HomePage> {
     if (row == null) return;
     final fr = row;
     final isIntra = searchH == 'انتراداي';
-    final exp = isIntra ? (fr['intra_exp'] ?? '') : (fr['h${searchH}_exp'] ?? '');
-    final prob = isIntra ? (fr['intra_p'] ?? '') : (fr['h${searchH}_p'] ?? '');
-    final prec = isIntra ? (fr['prec_intra'] ?? '') : (fr['prec_${searchH}'] ?? '');
+    final exp = isIntra ? (fr['intra_exp'] ?? '') : (fr['h' + searchH + '_exp'] ?? '');
+    final prob = isIntra ? (fr['intra_p'] ?? '') : (fr['h' + searchH + '_p'] ?? '');
+    final prec = isIntra ? (fr['prec_intra'] ?? '') : (fr['prec_' + searchH] ?? '');
     final p = double.tryParse(prob) ?? 0;
     final conf = p >= 60 ? 'قوية' : (p >= 50 ? 'متوسطة' : 'ضعيفة');
     final close = double.tryParse(fr['close'] ?? '') ?? 0;
