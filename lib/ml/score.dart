@@ -12,18 +12,18 @@ const features = [
 ];
 const grid = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 25, 30, 40, 50, 60, 80, 100, 120];
 
-class _Pair {
+class ModelPair {
   HgbModel? reg;
   HgbModel? clf;
   double thr = 0;
 }
 
-final _modelCache = <String, _Pair>{};
+final _modelCache = <String, ModelPair>{};
 
-Future<_Pair> _loadPair(String tag, String key) async {
+Future<ModelPair> loadModelPair(String tag, String key) async {
   final ck = '$tag/$key';
   if (_modelCache.containsKey(ck)) return _modelCache[ck]!;
-  final p = _Pair();
+  final p = ModelPair();
   p.reg = HgbModel.fromJson(await rootBundle.loadString('assets/models/${tag}_${key}_reg.json'), false);
   p.clf = HgbModel.fromJson(await rootBundle.loadString('assets/models/${tag}_${key}_clf.json'), true);
   final man = jsonDecode(await rootBundle.loadString('assets/models/manifest.json'));

@@ -117,7 +117,7 @@ Future<List<Candle>?> fetchTradingView(String ticker, {int count = 1400}) async 
       if (!done.isCompleted) done.completeError(e);
     });
     ch.sink.add(_fmt({'m': 'set_auth_token', 'p': ['unauthorized_user_token']}));
-    ch.sink.add(_fmt({'m': 'chart_create_session', 'p': [cs, ']}));
+    ch.sink.add(_fmt({'m': 'chart_create_session', 'p': [cs, '']}));
     final res = jsonEncode({'symbol': sym, 'adjustment': 'splits'});
     ch.sink.add(_fmt({'m': 'resolve_symbol', 'p': [cs, 'symbol_1', '=$res']}));
     ch.sink.add(_fmt({'m': 'create_series', 'p': [cs, series, series, 'symbol_1', '1D', count]}));

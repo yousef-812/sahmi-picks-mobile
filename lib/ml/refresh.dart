@@ -7,6 +7,7 @@ import 'inference.dart';
 import 'indicators.dart';
 import 'market.dart';
 import 'score.dart';
+import 'score.dart';
 
 const _grid = grid;
 
@@ -161,19 +162,19 @@ Future<RefreshReport> refreshUniverse(
   final regime = above / hists.length >= 0.5;
 
   // models
-  final intra = await _loadPair(tag, 'intra');
-  final gridModels = <int, _Pair>{};
+  final intra = await loadModelPair(tag, 'intra');
+  final gridModels = <int, ModelPair>{};
   for (final h in _grid) {
-    gridModels[h] = await _loadPair(tag, 'h$h');
+    gridModels[h] = await loadModelPair(tag, 'h$h');
   }
   final otherTag = tag == 'egx33' ? 'all' : 'egx33';
-  final otherH5 = await _loadPair(otherTag, 'h5');
+  final otherH5 = await loadModelPair(otherTag, 'h5');
 
   // score
   final names = hists.keys.toList();
   final featRows = names.map((t) => hists[t]!.rowAt(hists[t]!.candles.length - 1)).toList();
-  List<double> expOf(_Pair m) => [for (final x in featRows) m.reg!.predictReg(x) * 100];
-  List<double> probOf(_Pair m) => [for (final x in featRows) m.clf!.predictProba(x) * 100];
+  List<double> expOf(ModelPair m) => [for (final x in featRows) m.reg!.predictReg(x) * 100];
+  List<double> probOf(ModelPair m) => [for (final x in featRows) m.clf!.predictProba(x) * 100];
   final iExp = expOf(intra), iProb = probOf(intra);
   final gExp = <int, List<double>>{}, gProb = <int, List<double>>{};
   for (final h in _grid) {

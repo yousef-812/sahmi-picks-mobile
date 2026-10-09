@@ -252,7 +252,7 @@ class _HomePageState extends State<HomePage> {
     try {
       final parts = <String>[];
       for (final u in ['egx33', 'all']) {
-        final rep = await refreshUniverse(u, onProgress: (d, t, tk) {
+        final rep = await refreshUniverse(u, onProgress: (d, t, tk) async {
           prog.value = '$u: $tk ($d/$t)';
         });
         parts.add('$u: ${rep.ok} ناجح / ${rep.fail} فاشل');
