@@ -48,7 +48,7 @@ jobs:
       - name: Copy app source + data
         run: |
           cp pubspec.yaml analysis_options.yaml app_build/
-          rm -rf app_build/lib
+          rm -rf app_build/lib app_build/test
           cp -r lib app_build/
           cp -r assets app_build/
 
