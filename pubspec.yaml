@@ -28,6 +28,8 @@ flutter:
   assets:
     - assets/data/
     - assets/icon.png
+    - assets/models/
+    - assets/parity_test.json
 
 flutter_launcher_icons:
   android: true

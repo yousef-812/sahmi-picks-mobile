@@ -4,9 +4,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as ppath;
 import 'package:path_provider/path_provider.dart';
 import 'inference.dart';
-import 'indicators.dart';
 import 'market.dart';
-import 'score.dart';
 import 'score.dart';
 
 const _grid = grid;
@@ -37,9 +35,6 @@ Map<String, String> _baseRow(StockHist h) {
 }
 
 String _conf(double p) => p >= 60 ? 'قوية' : (p >= 50 ? 'متوسطة' : 'ضعيفة');
-
-List<double> _infer(HgbModel reg, HgbModel clf, List<double> x) =>
-    [reg.predictReg(x), clf.predictProba(x) * 100];
 
 Future<void> _writeCsv(File f, List<String> header, List<Map<String, String>> rows) async {
   final sb = StringBuffer()..writeln(header.join(','));

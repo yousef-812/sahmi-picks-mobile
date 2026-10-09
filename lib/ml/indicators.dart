@@ -18,7 +18,7 @@ List<double> _ewm(List<double> x, double alpha, int minPeriods) {
     }
     count++;
     ema = ema == null ? x[i] : alpha * x[i] + (1 - alpha) * ema;
-    out[i] = count >= minPeriods ? ema! : double.nan;
+    out[i] = count >= minPeriods ? ema : double.nan;
   }
   return out;
 }

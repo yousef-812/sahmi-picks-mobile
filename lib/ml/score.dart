@@ -1,9 +1,7 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/services.dart' show rootBundle;
 import 'inference.dart';
 import 'indicators.dart';
-import 'market.dart';
 
 const features = [
   'rsi', 'dist_sma50', 'dist_sma200', 'dd_252', 'ret_5d', 'ret_20d',
