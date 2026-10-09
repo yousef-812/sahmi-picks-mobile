@@ -318,18 +318,20 @@ class _HomePageState extends State<HomePage> {
       }
     }
     if (row == null) return;
+    final fr = row;
     final isIntra = searchH == 'انتراداي';
-    final exp = isIntra ? (row['intra_exp'] ?? '') : (row['h${searchH}_exp'] ?? '');
-    final prob = isIntra ? (row['intra_p'] ?? '') : (row['h${searchH}_p'] ?? '');
-    final prec = isIntra ? (row['prec_intra'] ?? '') : (row['prec_${searchH}'] ?? '');
+    final exp = isIntra ? (fr['intra_exp'] ?? '') : (fr['h${searchH}_exp'] ?? '');
+    final prob = isIntra ? (fr['intra_p'] ?? '') : (fr['h${searchH}_p'] ?? '');
+    final prec = isIntra ? (fr['prec_intra'] ?? '') : (fr['prec_${searchH}'] ?? '');
     final p = double.tryParse(prob) ?? 0;
     final conf = p >= 60 ? 'قوية' : (p >= 50 ? 'متوسطة' : 'ضعيفة');
-    final close = double.tryParse(row['close'] ?? '') ?? 0;
+    final close = double.tryParse(fr['close'] ?? '') ?? 0;
     final target = close * (1 + (double.tryParse(exp) ?? 0) / 100);
-    final sma20 = double.tryParse(row['sma20'] ?? '') ?? 0;
-    final rsi = double.tryParse(row['rsi'] ?? '') ?? 0;
-    final ext = (row['extended'] ?? '').toLowerCase() == 'true';
-    String dec, entry, eentry;
+    final sma20 = double.tryParse(fr['sma20'] ?? '') ?? 0;
+    final rsi = double.tryParse(fr['rsi'] ?? '') ?? 0;
+    final ext = (fr['extended'] ?? '').toLowerCase() == 'true';
+    String dec, entry;
+    String eentry;
     if (ext || rsi >= 70 || (sma20 > 0 && close > sma20 * 1.02)) {
       final tgt = sma20 > 0 ? (sma20 > close * 0.95 ? sma20 : close * 0.95) : close;
       if (tgt >= close) {
@@ -339,8 +341,7 @@ class _HomePageState extends State<HomePage> {
       } else {
         dec = 'انتظار ${tgt.toStringAsFixed(2)}';
         entry = tgt.toStringAsFixed(2);
-        eentry = (target - tgt) / tgt * 100;
-        eentry = eentry.toStringAsFixed(2);
+        eentry = (((target - tgt) / tgt * 100)).toStringAsFixed(2);
       }
     } else {
       dec = 'دخول حالا';
@@ -350,20 +351,20 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       searchResult = {
         'ticker': searchTicker,
-        'close': row['close'] ?? '',
+        'close': fr['close'] ?? '',
         'rsi': rsi.toStringAsFixed(1),
-        'rsi_range': row['rsi_range'] ?? '',
+        'rsi_range': fr['rsi_range'] ?? '',
         'h': isIntra ? 'انتراداي (بيع آخر اليوم)' : '$searchH جلسات',
         'exp': exp,
         'target': target.toStringAsFixed(2),
         'dec': dec,
         'entry': entry,
-        'eentry': eentry.toString(),
+        'eentry': eentry,
         'prob': prob,
         'conf': conf,
         'prec': prec,
         'state': ext ? 'ممتد - خطر مطاردة' : 'عادي',
-        'reason': row['reason'] ?? '',
+        'reason': fr['reason'] ?? '',
       };
     });
   }
